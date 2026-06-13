@@ -15,12 +15,22 @@ You must have at least 3 tools. The three required tools are listed — add any 
 ### Tool 1: search_listings
 
 **What it does:**
-Searches the mock listings dataset for items that match a natural language description, an optional size, and an optional price ceiling. Returns results sorted by keyword relevance, best match first.
+Searches the mock listings dataset for items that match a natural language description, an optional size, and an optional price ceiling. Size matching is category-aware: the dataset uses different sizing systems depending on item type (letter sizes for tops/outerwear, waist measurements for bottoms, US numeric for shoes, and "One Size" for accessories), so a helper function `_size_matches(listing_size, listing_category, query_size)` normalizes and compares sizes using the appropriate logic for each category. Results are returned sorted by keyword relevance, best match first.
 
 **Input parameters:**
 - `description` (str): Natural language keywords describing the desired item (e.g., "vintage graphic tee"). Matched against each listing's `title`, `description`, and `style_tags` fields.
-- `size` (str | None): Size string to filter by (e.g., "M", "S/M"). Case-insensitive. Pass `None` to skip size filtering.
+- `size` (str | None): Size string to filter by (e.g., "M", "W30", "8"). Case-insensitive. Matched using category-aware logic (see size matching below). Pass `None` to skip size filtering.
 - `max_price` (float | None): Maximum price in dollars, inclusive. Pass `None` to skip price filtering.
+
+**Size matching — `_size_matches(listing_size, listing_category, query_size)`:**
+
+Because the dataset uses incompatible sizing systems across categories, a dedicated helper handles all size comparisons. Both sides are normalized first: parenthetical notes are stripped (`"XL (oversized)"` → `"XL"`), the `"US "` prefix is removed from shoe sizes (`"US 8"` → `"8"`), and everything is lowercased.
+
+The helper then branches by `listing_category`:
+- **`tops` / `outerwear` / `accessories`** — slash-range listings (`"S/M"`, `"M/L"`) match if the query equals either half; otherwise exact match after normalization.
+- **`bottoms`** — size tokens are split on spaces (`"W30 L30"` → `["W30", "L30"]`); matches if the query equals any token (e.g., `"W30"` matches `"W30 L30"`).
+- **`shoes`** — exact match after stripping the `"US "` prefix (e.g., `"8"` matches `"US 8"`).
+- **Any category** — listings with `"One Size"` (in any form, including `"One Size / Oversized"` or `"One Size (adjustable)"`) always match regardless of the query size.
 
 **What it returns:**
 A `list[dict]`, where each dict is a listing with these fields:

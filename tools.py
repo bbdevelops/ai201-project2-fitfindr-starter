@@ -13,6 +13,7 @@ Tools:
 """
 
 import os
+import re
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -32,6 +33,35 @@ def _get_groq_client():
             "GROQ_API_KEY not set. Add it to a .env file in the project root."
         )
     return Groq(api_key=api_key)
+
+
+# ── Size matching helpers ─────────────────────────────────────────────────────
+
+def _normalize_size(size_str: str) -> str:
+    s = size_str.lower().strip()
+    s = re.sub(r'\(.*?\)', '', s).strip()   # remove parenthetical notes
+    s = re.sub(r'\bus\s*', '', s).strip()   # remove "us " shoe prefix
+    return s
+
+
+def _size_matches(listing_size: str, listing_category: str, query_size: str) -> bool:
+    norm_listing = _normalize_size(listing_size)
+    norm_query = _normalize_size(query_size)
+
+    if norm_listing.startswith('one size'):
+        return True
+
+    if listing_category == 'bottoms':
+        tokens = norm_listing.split()
+        return norm_query in tokens or norm_listing == norm_query
+
+    if listing_category == 'shoes':
+        return norm_listing == norm_query
+
+    # tops, outerwear, accessories — handle slash ranges (s/m, m/l)
+    if '/' in norm_listing:
+        return norm_query in norm_listing.split('/')
+    return norm_listing == norm_query
 
 
 # ── Tool 1: search_listings ───────────────────────────────────────────────────
@@ -69,8 +99,34 @@ def search_listings(
 
     Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+    listings = load_listings()
+
+    # Price filter
+    if max_price is not None:
+        listings = [item for item in listings if item["price"] <= max_price]
+
+    # Size filter
+    if size is not None:
+        listings = [
+            item for item in listings
+            if _size_matches(item["size"], item["category"], size)
+        ]
+
+    # Score by keyword overlap against title, description, and style_tags
+    query_tokens = set(re.findall(r'[a-z0-9]+', description.lower()))
+
+    def _score(item):
+        haystack = (
+            item["title"] + " "
+            + item["description"] + " "
+            + " ".join(item["style_tags"])
+        ).lower()
+        return sum(1 for token in query_tokens if token in haystack)
+
+    scored = [(item, _score(item)) for item in listings]
+    matched = [(item, score) for item, score in scored if score > 0]
+    matched.sort(key=lambda x: x[1], reverse=True)
+    return [item for item, _ in matched]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
