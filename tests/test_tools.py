@@ -1,5 +1,6 @@
 # tests/test_tools.py
-from tools import search_listings
+from tools import search_listings, suggest_outfit
+from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 REQUIRED_FIELDS = {"id", "title", "description", "category", "style_tags",
                    "size", "condition", "price", "colors", "brand", "platform"}
@@ -94,3 +95,61 @@ def test_search_one_size_accessory_matches_any_size():
     # lst_031 or similar one-size hat should be in results
     one_size_ids = [item["id"] for item in results if item["size"].lower().startswith("one size")]
     assert len(one_size_ids) > 0, "No one-size item matched when size='M'"
+
+
+# ── suggest_outfit tests ──────────────────────────────────────────────────────
+
+SAMPLE_ITEM = {
+    "id": "lst_001",
+    "title": "Faded Nirvana Tee",
+    "category": "tops",
+    "style_tags": ["vintage", "grunge", "graphic"],
+    "colors": ["black", "white"],
+    "description": "A faded vintage Nirvana band tee in great condition.",
+    "size": "M",
+    "condition": "good",
+    "price": 22.0,
+    "brand": None,
+    "platform": "depop",
+}
+
+
+def test_suggest_outfit_returns_string():
+    """Returns a non-empty string when called with the example wardrobe."""
+    result = suggest_outfit(SAMPLE_ITEM, get_example_wardrobe())
+    assert isinstance(result, str)
+    assert len(result.strip()) > 0
+
+
+def test_suggest_outfit_empty_wardrobe_no_crash():
+    """Empty wardrobe must not raise — should return general styling advice."""
+    result = suggest_outfit(SAMPLE_ITEM, get_empty_wardrobe())
+    assert isinstance(result, str)
+    assert len(result.strip()) > 0
+
+
+def test_suggest_outfit_mentions_item():
+    """Response should reference the item title or its category."""
+    result = suggest_outfit(SAMPLE_ITEM, get_example_wardrobe())
+    lower = result.lower()
+    assert "nirvana" in lower or "tee" in lower or "top" in lower, (
+        f"Response doesn't mention the item: {result[:200]}"
+    )
+
+
+def test_suggest_outfit_wardrobe_references_pieces():
+    """With a populated wardrobe, response should name at least one wardrobe piece."""
+    wardrobe = get_example_wardrobe()
+    piece_keywords = [w["name"].split()[0].lower() for w in wardrobe["items"]]
+    result = suggest_outfit(SAMPLE_ITEM, wardrobe)
+    lower = result.lower()
+    assert any(kw in lower for kw in piece_keywords), (
+        f"Response doesn't reference any wardrobe piece. Got: {result[:300]}"
+    )
+
+
+def test_suggest_outfit_missing_items_key_graceful():
+    """Wardrobe dict without 'items' key should be treated as empty (no crash)."""
+    result = suggest_outfit(SAMPLE_ITEM, {})
+    assert isinstance(result, str)
+    assert len(result.strip()) > 0

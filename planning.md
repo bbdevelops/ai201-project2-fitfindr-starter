@@ -60,7 +60,9 @@ Given a thrifted item the user is considering and their existing wardrobe, gener
 
 **Input parameters:**
 - `new_item` (dict): A listing dict from `search_listings` — the item the user is considering buying. Must have at minimum `title`, `category`, `style_tags`, and `colors`.
-- `wardrobe` (dict): The user's wardrobe with an `items` key containing a list of wardrobe item dicts. Each wardrobe item has `name` (str), `category` (str), `colors` (list[str]), and `style` (str). May be an empty list.
+- `wardrobe` (dict): The user's wardrobe with an `items` key containing a list of wardrobe item dicts. Each wardrobe item has `name` (str), `category` (str), `colors` (list[str]), and `style_tags` (list[str]). May be an empty list. The `items` key itself may also be absent (e.g., `{}`); the implementation treats this identically to an empty wardrobe.
+
+> **Implementation note:** The original spec listed the wardrobe item style field as `style` (str). The actual `wardrobe_schema.json` uses `style_tags` (list[str]). The implementation was updated to match the schema — `style_tags` is the correct field name. The wardrobe item's `style_tags` field is not included in the LLM prompt directly; only `name`, `category`, and `colors` are formatted into the prompt. The implementation also uses `wardrobe.get("items", [])` rather than `wardrobe["items"]` so a dict missing the `items` key is handled without raising a `KeyError`. LLM temperature is the Groq default (not explicitly set), consistent with the spec which reserves higher temperature (0.9+) for `create_fit_card` only.
 
 **What it returns:**
 A non-empty `str` containing outfit suggestions. When the wardrobe has items, the string names specific wardrobe pieces and how they combine with the new item. When the wardrobe is empty, the string offers general styling advice (what item categories pair well, what aesthetic it fits).
