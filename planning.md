@@ -132,18 +132,29 @@ For each tool, describe the specific failure mode you're handling and what the a
 
 ## A Complete Interaction (Step by Step)
 
-Write out what a full user interaction looks like from start to finish — tool call by tool call. Use a specific example query.
-
 **Example user query:** "I'm looking for a vintage graphic tee under $30. I mostly wear baggy jeans and chunky sneakers. What's out there and how would I style it?"
 
-**Step 1:**
-<!-- What does the agent do first? Which tool is called? With what input? -->
+**Step 1: Query parsing + search_listings**
 
-**Step 2:**
-<!-- What happens next? What was returned from step 1? What tool is called now? -->
+The agent extracts description="vintage graphic tee", size=None, max_price=30.0 from the query. Since session["selected_item"] is None, the planning loop calls search_listings(...). It returns [{"name": "Faded Nirvana Tee", "price": 22.0, ...}, ...]. The agent picks the top result and stores it in session["selected_item"].
 
-**Step 3:**
-<!-- Continue until the full interaction is complete -->
+(Non-happy path: If the list is empty, the agent sets session["error"] and stops, telling the user: "No listings matched... try broadening your description or raising your budget.")
+
+
+**Step 2: suggest_outfit**
+
+Since session["selected_item"] is populated and session["outfit_suggestion"] is None, the planning loop calls suggest_outfit(new_item=<stored tee>, wardrobe=<user wardrobe>). Returns a styling suggestion string, stored in session["outfit_suggestion"].
+
+**Step 3: create_fit_card**
+
+Since session["outfit_suggestion"] is populated and session["fit_card"] is None, the planning loop calls create_fit_card(outfit=<stored suggestion>, new_item=<stored tee>). Returns the caption string, stored in session["fit_card"].
 
 **Final output to user:**
-<!-- What does the user actually see at the end? -->
+
+All three session values returned to the UI. The user sees the Gradio interface populate its three specific output panels with the final session state data.
+
+Search Result Panel: Displays the selected item details, showing the "Faded Nirvana Tee" along with its price ($22.00) and condition.
+
+Styling Advice Panel: Displays the natural language response from the suggest_outfit tool, specifically advising the user on how to style the vintage tee with their preferred baggy jeans and chunky sneakers.
+
+Fit Card Panel: Displays the final generated Instagram-style caption from the create_fit_card tool, ready for the user to copy and share.
