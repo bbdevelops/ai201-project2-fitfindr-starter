@@ -16,6 +16,7 @@ import os
 import re
 import statistics
 
+import requests
 from dotenv import load_dotenv
 from groq import Groq
 
@@ -130,9 +131,136 @@ def search_listings(
     return [item for item, _ in matched]
 
 
+# ── Tool 5: get_trends ───────────────────────────────────────────────────────
+
+# Style keywords to recognize when scanning Reddit post titles
+_STYLE_KEYWORDS = [
+    "cottagecore", "quiet luxury", "gorpcore", "y2k", "grunge", "streetwear",
+    "preppy", "boho", "bohemian", "minimalist", "minimal", "coastal grandmother",
+    "dark academia", "light academia", "old money", "coquette", "mob wife",
+    "barbiecore", "dopamine dressing", "normcore", "techwear", "workwear",
+    "athleisure", "70s", "80s", "90s", "2000s", "vintage", "retro",
+    "lolita", "kawaii", "indie", "alt", "punk", "goth", "soft girl",
+    "clean girl", "model off duty", "business casual", "smart casual",
+]
+
+_PLUS_SIZE_PATTERNS = re.compile(
+    r'\b(1x|2x|3x|4x|xxl|xxxl|xxxxl|plus.?size|plus)\b', re.IGNORECASE
+)
+
+
+def _pick_subreddits(size: str | None) -> list[str]:
+    if size and _PLUS_SIZE_PATTERNS.search(size):
+        return ["PlusSizeFashion", "plussize"]
+    return ["femalefashionadvice", "streetwear"]
+
+
+def _extract_style_keywords(titles: list[str]) -> list[str]:
+    found = []
+    seen = set()
+    combined = " ".join(titles).lower()
+    for kw in _STYLE_KEYWORDS:
+        if kw in combined and kw not in seen:
+            found.append(kw)
+            seen.add(kw)
+    return found[:10]
+
+
+# RSS feeds from public fashion publications as a reliable fallback
+_FASHION_RSS_FEEDS = [
+    ("Who What Wear", "https://www.whowhatwear.com/rss"),
+    ("Refinery29", "https://www.refinery29.com/en-us/fashion/rss.xml"),
+]
+
+_RSS_ITEM_RE = re.compile(r'<title><!\[CDATA\[(.*?)\]\]></title>|<title>(.*?)</title>', re.DOTALL)
+
+
+def _fetch_rss_titles(url: str) -> list[str]:
+    headers = {"User-Agent": "FitFindr/1.0 (fashion trend aggregator)"}
+    resp = requests.get(url, headers=headers, timeout=8)
+    resp.raise_for_status()
+    titles = []
+    for m in _RSS_ITEM_RE.finditer(resp.text):
+        title = (m.group(1) or m.group(2) or "").strip()
+        if title:
+            titles.append(title)
+    return titles[1:16]  # skip the channel <title>, take up to 15 article titles
+
+
+def get_trends(size: str | None = None, category: str | None = None) -> dict:
+    """
+    Fetch currently trending fashion styles from public fashion sources.
+
+    Primary source: Reddit's public JSON API (fashion subreddits).
+    Fallback: RSS feeds from Who What Wear and Refinery29.
+    Subreddit selection adjusts for plus-size queries.
+
+    Args:
+        size:     Size string from the user's query (e.g., "M", "2X"). Used to
+                  route to size-appropriate subreddits. None = default subreddits.
+        category: Listing category (e.g., "tops"). Reserved for future routing;
+                  not currently used for subreddit selection.
+
+    Returns:
+        A dict with:
+            trends   (list[str]): Up to 10 trending style keywords found this week.
+            source   (str):       Human-readable description of the data source.
+        On failure of all sources:
+            trends   (list[str]): Empty list.
+            source   (str):       "unavailable"
+            error    (str):       Description of what went wrong.
+    """
+    # --- Try Reddit first ---
+    subreddits = _pick_subreddits(size)
+    reddit_headers = {
+        "User-Agent": "python:FitFindr:v1.0 (by /u/FitFindrApp)",
+    }
+    all_titles: list[str] = []
+    reddit_ok = False
+
+    for sub in subreddits:
+        try:
+            url = f"https://www.reddit.com/r/{sub}/top.json?t=week&limit=15"
+            resp = requests.get(url, headers=reddit_headers, timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+            posts = data.get("data", {}).get("children", [])
+            all_titles.extend(p["data"]["title"] for p in posts if "data" in p)
+            reddit_ok = True
+        except Exception:
+            pass  # try next subreddit or fall back to RSS
+
+    if reddit_ok and all_titles:
+        trends = _extract_style_keywords(all_titles)
+        source_label = " + ".join(f"r/{s}" for s in subreddits)
+        return {
+            "trends": trends,
+            "source": f"Reddit {source_label} (top posts, past week)",
+        }
+
+    # --- Fallback: fashion publication RSS feeds ---
+    last_error = "Reddit returned no data"
+    for feed_name, feed_url in _FASHION_RSS_FEEDS:
+        try:
+            rss_titles = _fetch_rss_titles(feed_url)
+            trends = _extract_style_keywords(rss_titles)
+            return {
+                "trends": trends,
+                "source": f"{feed_name} RSS (latest articles)",
+            }
+        except Exception as exc:
+            last_error = str(exc)
+
+    return {
+        "trends": [],
+        "source": "unavailable",
+        "error": last_error,
+    }
+
+
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
 
-def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
+def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None) -> str:
     """
     Given a thrifted item and the user's wardrobe, suggest 1–2 complete outfits.
 
@@ -165,10 +293,18 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
         f"Colors: {', '.join(new_item.get('colors', []))}"
     )
 
+    trend_line = ""
+    if trends and trends.get("trends"):
+        trend_line = (
+            f"\nCurrent trending styles this week: {', '.join(trends['trends'])}. "
+            "Where relevant, weave one of these trends into your outfit suggestion.\n"
+        )
+
     if not items:
         prompt = (
             "You are a personal stylist. The user is considering buying this thrifted item:\n"
-            f"{item_desc}\n\n"
+            f"{item_desc}\n"
+            f"{trend_line}\n"
             "They haven't shared their wardrobe yet. Suggest general styling ideas: "
             "what item types pair well with this piece, what aesthetic it fits, and how to "
             "build a simple outfit around it. Keep it conversational, 3–5 sentences."
@@ -180,7 +316,8 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
         )
         prompt = (
             "You are a personal stylist. The user is considering buying this thrifted item:\n"
-            f"{item_desc}\n\n"
+            f"{item_desc}\n"
+            f"{trend_line}\n"
             f"Their current wardrobe includes:\n{wardrobe_lines}\n\n"
             "Suggest 1–2 complete outfit combinations using the new item and specific pieces "
             "from their wardrobe above. Name the wardrobe pieces by name. Keep it "

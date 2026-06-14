@@ -121,6 +121,49 @@ If `item` is missing `category` or `price`, the agent logs the issue and skips d
 
 ---
 
+### Tool 5: get_trends (Stretch Feature)
+
+**What it does:**
+Fetches currently trending fashion styles from public online sources and extracts recognized style keywords from post and article titles. The results are passed into `suggest_outfit` so the LLM can weave current trends into its outfit recommendation. Subreddit selection adapts to the user's size — plus-size queries route to plus-size-specific communities. If the primary source (Reddit) is unavailable, the tool falls back to fashion publication RSS feeds automatically.
+
+**Input parameters:**
+- `size` (str | None): The size string parsed from the user's query (e.g., `"M"`, `"2X"`). Used to select size-appropriate data sources. Pass `None` to use default sources.
+- `category` (str | None): The listing category of the selected item (e.g., `"tops"`). Reserved for future source routing; not currently used for subreddit selection. Pass `None` if unknown.
+
+**Source selection logic:**
+
+Primary source — Reddit public JSON API (no auth required):
+```
+GET https://www.reddit.com/r/{subreddit}/top.json?t=week&limit=15
+User-Agent: python:FitFindr:v1.0 (by /u/FitFindrApp)
+```
+- Standard sizes (S, M, L, XL, etc.) → `r/femalefashionadvice` + `r/streetwear`
+- Plus sizes (1X, 2X, XXL, XXXL, etc.) → `r/PlusSizeFashion` + `r/plussize`
+
+Fallback sources (tried in order if Reddit returns a non-200 or no titles):
+1. Who What Wear RSS — `https://www.whowhatwear.com/rss`
+2. Refinery29 RSS — `https://www.refinery29.com/en-us/fashion/rss.xml`
+
+**Keyword extraction:**
+Post and article titles are scanned against a curated list of recognized style keywords: `cottagecore`, `quiet luxury`, `gorpcore`, `Y2K`, `grunge`, `streetwear`, `preppy`, `boho`, `minimalist`, `dark academia`, `old money`, `coquette`, `barbiecore`, `normcore`, `techwear`, `vintage`, `retro`, and others. Up to 10 matched keywords are returned in the order they appear in the keyword list.
+
+**What it returns:**
+A `dict` with:
+- `trends` (list[str]): Up to 10 style keywords currently appearing in top posts/articles. Empty list if no keywords were matched or if all sources failed.
+- `source` (str): Human-readable label for the data source used (e.g., `"Reddit r/femalefashionadvice + r/streetwear (top posts, past week)"` or `"Who What Wear RSS (latest articles)"`). Set to `"unavailable"` on total failure.
+- `error` (str): Present only on failure — describes what went wrong.
+
+**How it influences the outfit suggestion:**
+When `trends["trends"]` is non-empty, `suggest_outfit` appends the following to its LLM prompt before calling Groq:
+> *Current trending styles this week: [trend1], [trend2], ... Where relevant, weave one of these trends into your outfit suggestion.*
+
+This makes the trend signal visible in the outfit output without overriding the item or wardrobe context.
+
+**What happens if it fails or returns nothing:**
+If all sources fail (network error, rate limit, parse error), `get_trends` returns `{"trends": [], "source": "unavailable", "error": "..."}` — it never raises an exception. The agent calls `suggest_outfit` normally without trend context; the interaction completes successfully. Trend awareness is additive and non-blocking.
+
+---
+
 ## Planning Loop
 
 **How does your agent decide which tool to call next?**

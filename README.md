@@ -52,6 +52,25 @@ from utils.data_loader import get_example_wardrobe
 wardrobe = get_example_wardrobe()
 ```
 
+## Trend Awareness Tool
+
+`get_trends(size, category)` fetches currently trending fashion styles from public sources and injects them into the outfit suggestion.
+
+**Data sources (in priority order):**
+
+1. **Reddit JSON API** — pulls the top posts from the past week via `https://www.reddit.com/r/{subreddit}/top.json?t=week&limit=15`. Subreddit selection adapts to the user's size:
+   - Standard sizes → `r/femalefashionadvice` + `r/streetwear`
+   - Plus sizes (1X, 2X, XXL, etc.) → `r/PlusSizeFashion` + `r/plussize`
+2. **Fashion publication RSS feeds** (fallback if Reddit is unavailable) — `Who What Wear` and `Refinery29` public RSS feeds.
+
+**Keyword extraction:** Post/article titles are scanned against a curated list of recognized style keywords (e.g., `cottagecore`, `quiet luxury`, `Y2K`, `gorpcore`). Up to 10 matched keywords are returned.
+
+**Integration:** Trend keywords are appended to the `suggest_outfit` LLM prompt so the outfit recommendation explicitly references what's currently popular. Example prompt addition:
+
+> *Current trending styles this week: y2k, quiet luxury. Where relevant, weave one of these trends into your outfit suggestion.*
+
+**Failure handling:** If both Reddit and RSS feeds fail (network issues, rate limits), `get_trends` returns `{"trends": [], "source": "unavailable"}` and the agent continues normally — the outfit suggestion is generated without trend context rather than failing the interaction.
+
 ## Where to Start
 
 1. **Read `planning.md` and fill it out before writing any code.**

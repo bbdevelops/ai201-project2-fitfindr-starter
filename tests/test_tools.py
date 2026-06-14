@@ -1,5 +1,7 @@
 # tests/test_tools.py
-from tools import search_listings, suggest_outfit, create_fit_card, compare_price
+from unittest.mock import patch, MagicMock
+
+from tools import search_listings, suggest_outfit, create_fit_card, compare_price, get_trends
 from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 REQUIRED_FIELDS = {"id", "title", "description", "category", "style_tags",
@@ -291,3 +293,71 @@ def test_compare_price_reasoning_mentions_category():
     """reasoning string should mention the item's category."""
     result = compare_price(SAMPLE_ITEM)
     assert SAMPLE_ITEM["category"] in result["reasoning"].lower()
+
+
+# ── get_trends tests ──────────────────────────────────────────────────────────
+
+_MOCK_REDDIT_RESPONSE = {
+    "data": {
+        "children": [
+            {"data": {"title": "My cottagecore outfit for spring"}},
+            {"data": {"title": "Streetwear inspo — Y2K vibes this week"}},
+            {"data": {"title": "Quiet luxury look for the office"}},
+        ]
+    }
+}
+
+
+def _make_mock_response(json_data):
+    mock = MagicMock()
+    mock.raise_for_status.return_value = None
+    mock.json.return_value = json_data
+    return mock
+
+
+def test_get_trends_returns_dict():
+    """get_trends returns a dict with 'trends' and 'source' keys."""
+    with patch("tools.requests.get", return_value=_make_mock_response(_MOCK_REDDIT_RESPONSE)):
+        result = get_trends()
+    assert isinstance(result, dict)
+    assert "trends" in result
+    assert "source" in result
+
+
+def test_get_trends_trends_is_list():
+    """'trends' value is always a list."""
+    with patch("tools.requests.get", return_value=_make_mock_response(_MOCK_REDDIT_RESPONSE)):
+        result = get_trends()
+    assert isinstance(result["trends"], list)
+
+
+def test_get_trends_extracts_keywords():
+    """Recognized style keywords from post titles appear in the trends list."""
+    with patch("tools.requests.get", return_value=_make_mock_response(_MOCK_REDDIT_RESPONSE)):
+        result = get_trends()
+    assert any(kw in result["trends"] for kw in ["cottagecore", "streetwear", "y2k", "quiet luxury"])
+
+
+def test_get_trends_handles_plus_size():
+    """Calling with a plus-size string doesn't crash and returns required keys."""
+    with patch("tools.requests.get", return_value=_make_mock_response(_MOCK_REDDIT_RESPONSE)):
+        result = get_trends(size="2X")
+    assert "trends" in result
+    assert "source" in result
+
+
+def test_get_trends_handles_network_failure():
+    """A network error returns a fallback dict with empty trends and an error key."""
+    with patch("tools.requests.get", side_effect=ConnectionError("timeout")):
+        result = get_trends()
+    assert result["trends"] == []
+    assert result["source"] == "unavailable"
+    assert "error" in result
+
+
+def test_suggest_outfit_with_trends():
+    """suggest_outfit with a trends dict returns a non-empty string."""
+    trends = {"trends": ["cottagecore", "quiet luxury"], "source": "Reddit r/femalefashionadvice"}
+    result = suggest_outfit(SAMPLE_ITEM, get_example_wardrobe(), trends=trends)
+    assert isinstance(result, str)
+    assert len(result.strip()) > 0
