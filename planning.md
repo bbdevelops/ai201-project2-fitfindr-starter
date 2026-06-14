@@ -164,6 +164,30 @@ If all sources fail (network error, rate limit, parse error), `get_trends` retur
 
 ---
 
+### Tool 6: Style Profile Memory (Stretch Feature)
+
+**What it does:**
+Persists a frequency-counted map of style tags, colors, and sizes extracted from each completed interaction so that future outfit suggestions can reflect the user's accumulated preferences without any re-entry.
+
+**Functions (in `utils/style_profile.py`):**
+- `load_profile() -> dict`: Reads `data/style_profile.json`; returns an empty skeleton if the file is missing or unreadable.
+- `save_profile(profile: dict) -> None`: Writes the profile to disk and stamps `last_updated`.
+- `update_profile(profile: dict, session: dict) -> dict`: Increments `style_counts` and `color_counts` from `session["selected_item"]`, updates `preferred_sizes` by category, and increments `interaction_count`.
+- `top_n(count_dict, n=5) -> list`: Returns top-N keys by count — used at prompt-injection time to cap context at 5 styles and 5 colors.
+- `format_profile_summary(profile) -> str`: One-line human-readable summary for the Gradio UI.
+
+**Input parameters (update_profile):**
+- `profile` (dict): The current profile loaded from disk.
+- `session` (dict): Completed session after `create_fit_card` succeeds.
+
+**What it returns:**
+No user-facing return value. Side effects: `data/style_profile.json` is written. `session["style_profile"]` is set to the updated profile for display in the UI.
+
+**What happens if it fails:**
+Profile read/write errors are non-blocking — a missing or corrupt file returns an empty profile skeleton; a write error is not caught but also does not affect the interaction output.
+
+---
+
 ## Planning Loop
 
 **How does your agent decide which tool to call next?**
@@ -219,6 +243,7 @@ What is stored and when:
 | `outfit_suggestion` | str or None | After `suggest_outfit` runs | `create_fit_card` |
 | `fit_card` | str or None | After `create_fit_card` runs | Returned to UI |
 | `error` | str or None | On any early-termination condition | Returned to UI |
+| `style_profile` | dict | Loaded at start of `run_agent`; updated after `create_fit_card` succeeds | `suggest_outfit` (top-5 injection into LLM prompt); Gradio profile panel |
 
 How it flows between tools:
 - `session["selected_item"]` is `search_results[0]` — the exact same dict object is passed as `new_item` to `compare_price`, `suggest_outfit`, and `create_fit_card`.
@@ -251,7 +276,7 @@ For each tool, describe the specific failure mode you're handling and what the a
 flowchart TD
     A([User query + wardrobe choice<br>Gradio UI — handle_query]) --> B[run_agent: initialize session<br>_new_session]
     B --> C[Parse query with regex<br>extract description, size, max_price<br>store in session.parsed]
-    C --> D[search_listings<br>description, size, max_price]
+    C --> D[search_listings<br>description, size, max_price, category]
     D --> E{results empty?}
     E -- Yes --> F[session.error =<br>No listings found...<br>return session early]
     E -- No --> G[session.selected_item = results-0]

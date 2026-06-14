@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from groq import Groq
 
 from utils.data_loader import load_listings
+from utils.style_profile import top_n
 
 load_dotenv()
 
@@ -85,10 +86,11 @@ def search_listings(
     description: str,
     size: str | None = None,
     max_price: float | None = None,
+    category: str | None = None,
 ) -> list[dict]:
     """
     Search the mock listings dataset for items matching the description,
-    optional size, and optional price ceiling.
+    optional size, optional price ceiling, and optional category.
 
     Args:
         description: Keywords describing what the user is looking for
@@ -96,6 +98,8 @@ def search_listings(
         size:        Size string to filter by, or None to skip size filtering.
                      Matching is case-insensitive (e.g., "M" matches "S/M").
         max_price:   Maximum price (inclusive), or None to skip price filtering.
+        category:    Specific item category (e.g., "tops", "shoes", "bottoms"),
+                     or None to skip category filtering.
 
     Returns:
         A list of matching listing dicts, sorted by relevance (best match first).
@@ -104,17 +108,16 @@ def search_listings(
     Each listing dict has the following fields:
         id, title, description, category, style_tags (list), size,
         condition, price (float), colors (list), brand, platform
-
-    TODO:
-        1. Load all listings with load_listings().
-        2. Filter by max_price and size (if provided).
-        3. Score each remaining listing by keyword overlap with `description`.
-        4. Drop any listings with a score of 0 (no relevant matches).
-        5. Sort by score, highest first, and return the listing dicts.
-
-    Before writing code, fill in the Tool 1 section of planning.md.
     """
     listings = load_listings()
+
+    # Category filter (strict hard filter — applied before scoring)
+    if category is not None:
+        target_cat = category.lower().strip()
+        listings = [
+            item for item in listings
+            if item.get("category", "").lower() == target_cat
+        ]
 
     # Price filter
     if max_price is not None:
@@ -296,7 +299,7 @@ def get_trends(size: str | None = None, category: str | None = None) -> dict:
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
 
-def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None, user_query: str | None = None) -> str:
+def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None, user_query: str | None = None, style_profile: dict | None = None) -> str:
     """
     Given a thrifted item and the user's wardrobe, suggest 1–2 complete outfits.
 
@@ -336,6 +339,18 @@ def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None, u
             "Where relevant, weave one of these trends into your outfit suggestion.\n"
         )
 
+    profile_line = ""
+    if style_profile and style_profile.get("interaction_count", 0) > 0:
+        top_styles = top_n(style_profile.get("style_counts", {}))
+        top_colors = top_n(style_profile.get("color_counts", {}))
+        parts = []
+        if top_styles:
+            parts.append(f"preferred styles: {', '.join(top_styles)}")
+        if top_colors:
+            parts.append(f"preferred colors: {', '.join(top_colors)}")
+        if parts:
+            profile_line = f"\nUser's remembered style profile — {'; '.join(parts)}. Incorporate these naturally where they fit.\n"
+
     query_line = ""
     if user_query:
         query_line = (
@@ -348,7 +363,8 @@ def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None, u
         prompt = (
             "You are a personal stylist. The user is considering buying this thrifted item:\n"
             f"{item_desc}\n"
-            f"{trend_line}\n"
+            f"{trend_line}"
+            f"{profile_line}"
             f"The user specifically requested: '{user_query}'.\n"
             "CRITICAL INSTRUCTION: Pay close attention to any gender, demographic, or fit preferences mentioned in the user's request (e.g., 'for men', 'menswear'). You MUST tailor the styling advice, silhouettes, and paired items to strictly match that demographic. "
             "The user has an empty wardrobe profile. Provide 2 to 3 universal styling options for this piece. "
@@ -364,7 +380,8 @@ def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None, u
         prompt = (
             "You are a personal stylist. The user is considering buying this thrifted item:\n"
             f"{item_desc}\n"
-            f"{trend_line}\n"
+            f"{trend_line}"
+            f"{profile_line}"
             f"The user specifically requested: '{user_query}'.\n"
             "CRITICAL INSTRUCTION: Pay close attention to any gender, demographic, or fit preferences mentioned in the user's request (e.g., 'for men', 'menswear'). You MUST tailor the styling advice, silhouettes, and paired items to strictly match that demographic. "
             f"Their current wardrobe includes:\n{wardrobe_lines}\n\n"

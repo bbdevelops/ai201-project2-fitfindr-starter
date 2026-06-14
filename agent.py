@@ -21,6 +21,7 @@ Usage (once implemented):
 import re
 
 from tools import search_listings, suggest_outfit, create_fit_card, compare_price, get_trends
+from utils.style_profile import load_profile, save_profile, update_profile
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -70,6 +71,10 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     # Step 1: Initialize session
     session = _new_session(query, wardrobe)
 
+    # Load persisted style profile for this user
+    style_profile = load_profile()
+    session["style_profile"] = style_profile
+
     # Step 2: Parse query with regex
     price_match = re.search(r'under\s*\$(\d+(?:\.\d+)?)', query, re.IGNORECASE) \
                or re.search(r'\$(\d+(?:\.\d+)?)', query, re.IGNORECASE)
@@ -78,19 +83,33 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     size_match = re.search(r'\bsize\s+([A-Z0-9]+(?:/[A-Z0-9]+)?)\b', query, re.IGNORECASE)
     size = size_match.group(1) if size_match else None
 
+    _CATEGORY_MAP = [
+        ("shoes",       r'\b(shoes?|sneakers?|boots?|heels?|sandals?|loafers?|flats?)\b'),
+        ("outerwear",   r'\b(jacket|coat|blazer|parka|windbreaker|trench)\b'),
+        ("bottoms",     r'\b(jeans?|pants?|skirts?|shorts?|trousers?|leggings?|chinos?|cords?|corduroys?)\b'),
+        ("accessories", r'\b(belt|bag|purse|jewelry|necklace|bracelet|earrings?|hat|scarf|beanie|wallet)\b'),
+        ("tops",        r'\b(tee|tees|t-shirt|shirt|top|blouse|cardigan|tank|sweater|hoodie|sweatshirt)\b'),
+    ]
+    category = None
+    for cat, pattern in _CATEGORY_MAP:
+        if re.search(pattern, query, re.IGNORECASE):
+            category = cat
+            break
+
     description = re.sub(r'under\s*\$\d+(?:\.\d+)?', '', query, flags=re.IGNORECASE)
     description = re.sub(r'\$\d+(?:\.\d+)?', '', description, flags=re.IGNORECASE)
     description = re.sub(r'\bsize\s+\S+', '', description, flags=re.IGNORECASE).strip()
 
-    session["parsed"] = {"description": description, "size": size, "max_price": max_price}
+    session["parsed"] = {"description": description, "size": size, "max_price": max_price, "category": category}
 
     # Step 3: Search — branch on empty results (do NOT proceed with empty input)
-    results = search_listings(description, size, max_price)
+    results = search_listings(description, size, max_price, category=category)
     session["search_results"] = results
     if not results:
         price_clause = f" under ${max_price:.0f}" if max_price else ""
+        cat_hint = f" in the '{category}' category" if category else ""
         session["error"] = (
-            f"No listings found for '{description}'{price_clause}. "
+            f"No listings found for '{description}'{price_clause}{cat_hint}. "
             "Try broadening your description or raising your budget."
         )
         return session
@@ -117,7 +136,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
     # Step 5: Suggest outfit (with trend context when available)
     try:
-        outfit = suggest_outfit(session["selected_item"], session["wardrobe"], trends=trends, user_query=session["parsed"]["description"])
+        outfit = suggest_outfit(session["selected_item"], session["wardrobe"], trends=trends, user_query=session["parsed"]["description"], style_profile=style_profile)
     except Exception:
         session["error"] = (
             "Couldn't generate an outfit suggestion — the styling service is unavailable. "
@@ -144,7 +163,11 @@ def run_agent(query: str, wardrobe: dict) -> dict:
         )
         return session
 
-    # Step 7: Return completed session
+    # Step 7: Persist learned style preferences, then return
+    updated_profile = update_profile(style_profile, session)
+    save_profile(updated_profile)
+    session["style_profile"] = updated_profile
+
     return session
 
 
