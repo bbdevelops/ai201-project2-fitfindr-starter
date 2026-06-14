@@ -14,6 +14,7 @@ Tools:
 
 import os
 import re
+import statistics
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -248,3 +249,66 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         temperature=0.9,
     )
     return response.choices[0].message.content or ""
+
+
+# ── Tool 4: compare_price ─────────────────────────────────────────────────────
+
+_UNKNOWN = {"verdict": "unknown", "reasoning": "No comparable listings found."}
+
+
+def compare_price(item: dict) -> dict:
+    """
+    Estimate whether a listing's price is fair relative to similar items
+    in the dataset.
+
+    Args:
+        item: A listing dict from search_listings. Uses 'category' and 'price'.
+
+    Returns:
+        A dict with:
+            verdict      (str):   "great deal", "fair price", or "above average"
+            median_price (float): Median price of comparable listings
+            percentile   (int):   0–100; lower = cheaper relative to category
+            reasoning    (str):   1–2 sentence explanation
+
+        Returns {"verdict": "unknown", "reasoning": "No comparable listings found."}
+        if category/price are missing or no comparables exist.
+    """
+    category = item.get("category")
+    price = item.get("price")
+    if category is None or price is None:
+        return _UNKNOWN
+
+    item_id = item.get("id")
+    comparables = [
+        lst["price"]
+        for lst in load_listings()
+        if lst["category"] == category and lst.get("id") != item_id
+    ]
+
+    if not comparables:
+        return _UNKNOWN
+
+    median_price = round(statistics.median(comparables), 2)
+    cheaper_count = sum(1 for p in comparables if p < price)
+    percentile = round(cheaper_count / len(comparables) * 100)
+
+    if percentile <= 33:
+        verdict = "great deal"
+    elif percentile <= 66:
+        verdict = "fair price"
+    else:
+        verdict = "above average"
+
+    reasoning = (
+        f"This ${price:.0f} {category[:-1] if category.endswith('s') else category} "
+        f"is at the {percentile}th percentile of {category} listings in the dataset, "
+        f"which have a median price of ${median_price:.0f}."
+    )
+
+    return {
+        "verdict": verdict,
+        "median_price": median_price,
+        "percentile": percentile,
+        "reasoning": reasoning,
+    }

@@ -1,5 +1,5 @@
 # tests/test_tools.py
-from tools import search_listings, suggest_outfit, create_fit_card
+from tools import search_listings, suggest_outfit, create_fit_card, compare_price
 from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 REQUIRED_FIELDS = {"id", "title", "description", "category", "style_tags",
@@ -218,3 +218,76 @@ def test_create_fit_card_varies_across_calls():
     assert result_a != result_b, (
         "Both calls returned identical output — temperature may be 0 or too low."
     )
+
+
+# ── compare_price tests ───────────────────────────────────────────────────────
+
+UNKNOWN_RESULT = {"verdict": "unknown", "reasoning": "No comparable listings found."}
+VALID_VERDICTS = {"great deal", "fair price", "above average"}
+
+
+def test_compare_price_returns_dict():
+    """Returns a dict with all four required keys for a valid item."""
+    result = compare_price(SAMPLE_ITEM)
+    assert isinstance(result, dict)
+    assert {"verdict", "median_price", "percentile", "reasoning"}.issubset(result.keys())
+
+
+def test_compare_price_verdict_values():
+    """verdict must be one of the three valid strings."""
+    result = compare_price(SAMPLE_ITEM)
+    assert result["verdict"] in VALID_VERDICTS
+
+
+def test_compare_price_great_deal():
+    """An item priced much lower than its category median should be a great deal."""
+    cheap_item = {**SAMPLE_ITEM, "price": 1.0}
+    result = compare_price(cheap_item)
+    assert result["verdict"] == "great deal", f"Expected 'great deal', got: {result}"
+
+
+def test_compare_price_above_average():
+    """An item priced far above its category median should be above average."""
+    pricey_item = {**SAMPLE_ITEM, "price": 999.0}
+    result = compare_price(pricey_item)
+    assert result["verdict"] == "above average", f"Expected 'above average', got: {result}"
+
+
+def test_compare_price_median_is_positive():
+    """median_price should be a positive number."""
+    result = compare_price(SAMPLE_ITEM)
+    assert result["median_price"] > 0
+
+
+def test_compare_price_percentile_range():
+    """percentile must be an int in the range 0–100."""
+    result = compare_price(SAMPLE_ITEM)
+    assert isinstance(result["percentile"], int)
+    assert 0 <= result["percentile"] <= 100
+
+
+def test_compare_price_missing_category():
+    """Missing 'category' key returns the unknown dict — no exception raised."""
+    item_no_cat = {k: v for k, v in SAMPLE_ITEM.items() if k != "category"}
+    result = compare_price(item_no_cat)
+    assert result == UNKNOWN_RESULT
+
+
+def test_compare_price_missing_price():
+    """Missing 'price' key returns the unknown dict — no exception raised."""
+    item_no_price = {k: v for k, v in SAMPLE_ITEM.items() if k != "price"}
+    result = compare_price(item_no_price)
+    assert result == UNKNOWN_RESULT
+
+
+def test_compare_price_unknown_category():
+    """A category not present in the dataset returns the unknown dict."""
+    item_bad_cat = {**SAMPLE_ITEM, "category": "underwater_gear"}
+    result = compare_price(item_bad_cat)
+    assert result == UNKNOWN_RESULT
+
+
+def test_compare_price_reasoning_mentions_category():
+    """reasoning string should mention the item's category."""
+    result = compare_price(SAMPLE_ITEM)
+    assert SAMPLE_ITEM["category"] in result["reasoning"].lower()
