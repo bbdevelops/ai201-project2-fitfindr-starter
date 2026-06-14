@@ -66,6 +66,19 @@ def _size_matches(listing_size: str, listing_category: str, query_size: str) -> 
     return norm_listing == norm_query
 
 
+STOP_WORDS = {
+    "i", "a", "an", "the", "in", "need", "for", "with", "my", "me",
+    "some", "want", "looking", "something", "please", "get", "find",
+}
+
+STYLE_CLUSTERS = [
+    {"punk", "goth", "grunge", "biker", "rock", "edgy", "alternative"},
+    {"boho", "bohemian", "cottagecore", "earthy", "flowy"},
+    {"preppy", "classic", "collegiate", "polo", "blazer"},
+    {"streetwear", "urban", "hypebeast", "oversized", "graphic"},
+]
+
+
 # ── Tool 1: search_listings ───────────────────────────────────────────────────
 
 def search_listings(
@@ -114,14 +127,21 @@ def search_listings(
             if _size_matches(item["size"], item["category"], size)
         ]
 
-    # Score by keyword overlap against title, description, and style_tags
-    query_tokens = set(re.findall(r'[a-z0-9]+', description.lower()))
+    # Score by keyword overlap against title, description, style_tags, and colors
+    raw_tokens = set(re.findall(r'[a-z0-9]+', description.lower()))
+    query_tokens = raw_tokens - STOP_WORDS
+
+    # Bidirectional style cluster expansion: if any token hits a cluster, add the whole cluster
+    for cluster in STYLE_CLUSTERS:
+        if query_tokens & cluster:
+            query_tokens |= cluster
 
     def _score(item):
         haystack = (
             item["title"] + " "
             + item["description"] + " "
-            + " ".join(item["style_tags"])
+            + " ".join(item["style_tags"]) + " "
+            + " ".join(item.get("colors", []))
         ).lower()
         return sum(1 for token in query_tokens if token in haystack)
 
@@ -135,15 +155,31 @@ def search_listings(
 
 # Style keywords to recognize when scanning Reddit post titles
 _STYLE_KEYWORDS = [
-    "cottagecore", "quiet luxury", "gorpcore", "y2k", "grunge", "streetwear",
-    "preppy", "boho", "bohemian", "minimalist", "minimal", "coastal grandmother",
-    "dark academia", "light academia", "old money", "coquette", "mob wife",
-    "barbiecore", "dopamine dressing", "normcore", "techwear", "workwear",
-    "athleisure", "70s", "80s", "90s", "2000s", "vintage", "retro",
-    "lolita", "kawaii", "indie", "alt", "punk", "goth", "soft girl",
-    "clean girl", "model off duty", "business casual", "smart casual",
-]
+    # --- Classic & Traditional ---
+    "preppy", "minimalist", "quiet luxury", "workwear", "business casual", 
+    "smart casual", "western", "equestrian", "nautical", "old money",
 
+    # --- Subcultures & Alternative ---
+    "grunge", "punk", "goth", "whimsigoth", "emo", "scene", "indie sleaze", 
+    "cyberpunk", "steampunk", "biker", "rocker", "metal", "raver", "techno", "shoegaze",
+
+    # --- Modern Internet & Core Aesthetics ---
+    "cottagecore", "gorpcore", "y2k", "coquette", "mob wife", "barbiecore", 
+    "dopamine dressing", "normcore", "techwear", "athleisure", "clean girl", 
+    "dark academia", "light academia", "coastal grandmother", "fairycore", 
+    "royalcore", "cluttercore", "balletcore", "bikercore",
+
+    # --- Global & Regional Influences ---
+    "boho", "harajuku", "kawaii", "lolita", "scandi chic", "french girl", 
+    "parisian", "streetwear", "skater",
+
+    # --- Vintage & Retro (Best used alongside specific era tags) ---
+    "vintage", "retro", "mod", "disco", "pin up", "rockabilly",
+
+    # --- Thrifting and Construction Terms --- #
+    "upcycled", "reworked", "patchwork",
+
+]
 _PLUS_SIZE_PATTERNS = re.compile(
     r'\b(1x|2x|3x|4x|xxl|xxxl|xxxxl|plus.?size|plus)\b', re.IGNORECASE
 )
@@ -260,7 +296,7 @@ def get_trends(size: str | None = None, category: str | None = None) -> dict:
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
 
-def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None) -> str:
+def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None, user_query: str | None = None) -> str:
     """
     Given a thrifted item and the user's wardrobe, suggest 1–2 complete outfits.
 
@@ -300,14 +336,25 @@ def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None) -
             "Where relevant, weave one of these trends into your outfit suggestion.\n"
         )
 
+    query_line = ""
+    if user_query:
+        query_line = (
+            f"\nThe user specifically requested: '{user_query}'. "
+            "Prioritize this style and color palette in your suggestions.\n"
+        )
+
     if not items:
+        # ... (empty wardrobe prompt) ...
         prompt = (
             "You are a personal stylist. The user is considering buying this thrifted item:\n"
             f"{item_desc}\n"
             f"{trend_line}\n"
-            "They haven't shared their wardrobe yet. Suggest general styling ideas: "
-            "what item types pair well with this piece, what aesthetic it fits, and how to "
-            "build a simple outfit around it. Keep it conversational, 3–5 sentences."
+            f"The user specifically requested: '{user_query}'.\n"
+            "CRITICAL INSTRUCTION: Pay close attention to any gender, demographic, or fit preferences mentioned in the user's request (e.g., 'for men', 'menswear'). You MUST tailor the styling advice, silhouettes, and paired items to strictly match that demographic. "
+            "The user has an empty wardrobe profile. Provide 2 to 3 universal styling options for this piece. "
+            "Focus purely on color coordination, silhouette, and classic staple pieces. "
+            "Do not try to assign niche internet aesthetics or combine contrasting trends. "
+            "Keep it conversational, 3 to 5 sentences."
         )
     else:
         wardrobe_lines = "\n".join(
@@ -318,10 +365,12 @@ def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None) -
             "You are a personal stylist. The user is considering buying this thrifted item:\n"
             f"{item_desc}\n"
             f"{trend_line}\n"
+            f"The user specifically requested: '{user_query}'.\n"
+            "CRITICAL INSTRUCTION: Pay close attention to any gender, demographic, or fit preferences mentioned in the user's request (e.g., 'for men', 'menswear'). You MUST tailor the styling advice, silhouettes, and paired items to strictly match that demographic. "
             f"Their current wardrobe includes:\n{wardrobe_lines}\n\n"
-            "Suggest 1–2 complete outfit combinations using the new item and specific pieces "
+            "Suggest 1 to 2 complete outfit combinations using the new item and specific pieces "
             "from their wardrobe above. Name the wardrobe pieces by name. Keep it "
-            "conversational, 3–5 sentences."
+            "conversational, 3 to 5 sentences."
         )
 
     client = _get_groq_client()

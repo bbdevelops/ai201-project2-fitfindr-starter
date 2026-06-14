@@ -117,7 +117,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
     # Step 5: Suggest outfit (with trend context when available)
     try:
-        outfit = suggest_outfit(session["selected_item"], session["wardrobe"], trends=trends)
+        outfit = suggest_outfit(session["selected_item"], session["wardrobe"], trends=trends, user_query=session["parsed"]["description"])
     except Exception:
         session["error"] = (
             "Couldn't generate an outfit suggestion — the styling service is unavailable. "
