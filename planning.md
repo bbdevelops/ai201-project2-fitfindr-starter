@@ -172,24 +172,30 @@ The planning loop in `run_agent()` works as a sequential conditional chain — e
 
 1. **Initialize**: Call `_new_session(query, wardrobe)` to create the session dict.
 
-2. **Parse query**: Extract `description` (str), `size` (str | None), and `max_price` (float | None) from the raw query string using regex patterns:
-   - Price: match `under \$(\d+)` or `\$(\d+)` → `float`
-   - Size: match `\bsize\s+([XSML]+\d*)\b` → `str`, else `None`
-   - Description: remove price/size fragments; remainder becomes description
-   - Store parsed values in `session["parsed"]`.
+2. **Parse query**: Extract `description` (str), `size` (str | None), and `max_price` (float | None) from the raw query string using three regex patterns:
+   - Price: `under\s*\$(\d+(?:\.\d+)?)` tried first, then bare `\$(\d+(?:\.\d+)?)` → cast to `float`
+   - Size: `\bsize\s+([A-Z0-9]+(?:/[A-Z0-9]+)?)\b` (case-insensitive) → `str`, else `None`
+   - Description: price and size fragments stripped from the query; stripped remainder becomes description
+   - Store all three in `session["parsed"]`.
 
 3. **Search**: Call `search_listings(description, size, max_price)`. Store the result list in `session["search_results"]`.
-   - **If `session["search_results"] == []`**: set `session["error"]` to a specific message and `return session` immediately. Do NOT proceed.
+   - **If `session["search_results"] == []`**: set `session["error"]` to a specific message and `return session` immediately. Do NOT proceed to any further tool.
    - **If results are non-empty**: set `session["selected_item"] = session["search_results"][0]`.
 
-4. **Suggest outfit**: Call `suggest_outfit(session["selected_item"], session["wardrobe"])`. Store the returned string in `session["outfit_suggestion"]`.
-   - **If the returned string is empty**: set `session["error"]` and `return session` early.
+4. **Compare price** *(stretch, non-blocking)*: Call `compare_price(session["selected_item"])`. Store the result dict in `session["price_comparison"]`. Any exception is caught and suppressed — the loop continues regardless.
 
-5. **Create fit card**: Call `create_fit_card(session["outfit_suggestion"], session["selected_item"])`. Store the result in `session["fit_card"]`.
+5. **Get trends** *(stretch, non-blocking)*: Call `get_trends(size=size, category=selected_item["category"])`. Store the result dict in `session["trends"]`. Any exception is caught — the loop continues with an empty trends dict. The result is passed directly into `suggest_outfit` so the LLM can weave current trends into its suggestion.
 
-6. **Return**: Return the completed session dict.
+6. **Suggest outfit**: Call `suggest_outfit(session["selected_item"], session["wardrobe"], trends=session["trends"])`. 
+   - **If an exception is raised or the returned string is empty/whitespace**: set `session["error"]` and `return session` early. Do NOT proceed to `create_fit_card`.
+   - **Otherwise**: store the string in `session["outfit_suggestion"]`.
 
-The agent knows it is done when `session["fit_card"]` is populated, or when `session["error"]` is set (early termination). It never calls all three tools unconditionally — each step is gated on the result of the prior step.
+7. **Create fit card**: Call `create_fit_card(session["outfit_suggestion"], session["selected_item"])`. Store the result in `session["fit_card"]`.
+   - **If an exception is raised**: set `session["error"]` and `return session` early.
+
+8. **Return**: Return the completed session dict.
+
+The agent knows it is done when `session["fit_card"]` is populated, or when `session["error"]` is set (early termination). Steps 4 and 5 are always attempted once a result is found — they are non-blocking and never cause early termination. Steps 6 and 7 are each gated on the success of the prior step.
 
 ---
 
@@ -206,17 +212,21 @@ What is stored and when:
 | `query` | str | Initialization | Query parser |
 | `parsed` | dict | After query parsing | `search_listings` |
 | `search_results` | list[dict] | After `search_listings` runs | Planning loop branch check |
-| `selected_item` | dict or None | After results confirmed non-empty | `suggest_outfit`, `create_fit_card` |
+| `selected_item` | dict or None | After results confirmed non-empty | `compare_price`, `get_trends`, `suggest_outfit`, `create_fit_card` |
 | `wardrobe` | dict | Initialization (passed in by caller) | `suggest_outfit` |
+| `price_comparison` | dict or None | After `compare_price` runs (stretch) | `handle_query` — surfaced in listing panel |
+| `trends` | dict or None | After `get_trends` runs (stretch) | `suggest_outfit` (passed as kwarg); `handle_query` — surfaced in listing panel |
 | `outfit_suggestion` | str or None | After `suggest_outfit` runs | `create_fit_card` |
 | `fit_card` | str or None | After `create_fit_card` runs | Returned to UI |
 | `error` | str or None | On any early-termination condition | Returned to UI |
 
 How it flows between tools:
-- `session["selected_item"]` is the dict returned by `search_listings` — the exact same object is passed as `new_item` to both `suggest_outfit` and `create_fit_card`.
+- `session["selected_item"]` is `search_results[0]` — the exact same dict object is passed as `new_item` to `compare_price`, `suggest_outfit`, and `create_fit_card`.
+- `session["trends"]` is the dict returned by `get_trends` — passed as the `trends=` keyword argument to `suggest_outfit` so the LLM can weave current styles into its suggestion.
 - `session["outfit_suggestion"]` is the string returned by `suggest_outfit` — the exact same string is passed as `outfit` to `create_fit_card`.
-- The user never re-enters data between steps. The session dict is the single thread of state across all three tool calls.
-- At the end of `run_agent()`, the entire session dict is returned so `handle_query()` in `app.py` can map `selected_item`, `outfit_suggestion`, and `fit_card` to the three Gradio output panels.
+- `session["price_comparison"]` and `session["trends"]` are read by `handle_query()` in `app.py` to append a price verdict line and a trending-styles line to the listing panel text.
+- The user never re-enters data between steps. The session dict is the single thread of state across all tool calls.
+- At the end of `run_agent()`, the entire session dict is returned so `handle_query()` can map `selected_item`, `outfit_suggestion`, and `fit_card` to the three Gradio output panels.
 
 ---
 
@@ -226,9 +236,12 @@ For each tool, describe the specific failure mode you're handling and what the a
 
 | Tool | Failure mode | Agent response |
 |------|-------------|----------------|
-| `search_listings` | Returns `[]` — no listings match description/size/price filters | Sets `session["error"]` = "No listings found for '[description]' under $[max_price]. Try broadening your description or raising your budget." Returns session immediately; does not call `suggest_outfit`. |
-| `suggest_outfit` | LLM call raises an exception (e.g., API timeout, invalid key) | Sets `session["error"]` = "Couldn't generate an outfit suggestion — the styling service is unavailable. Try again in a moment." Returns session; does not call `create_fit_card`. |
-| `create_fit_card` | `outfit` argument is an empty or whitespace-only string | Function returns the error string "Can't create a fit card — the outfit description is missing. Please try your search again." — no exception raised; agent stores the string in `session["fit_card"]` and returns session. |
+| `search_listings` | Returns `[]` — no listings match description/size/price filters | Sets `session["error"]` = "No listings found for '[description]' under $[max_price]. Try broadening your description or raising your budget." Returns session immediately; does not call any further tool. |
+| `compare_price` | Any exception (missing `category`/`price` key, unexpected data) | Sets `session["price_comparison"] = None` and continues. Non-blocking — price verdict is omitted from the UI but the rest of the interaction completes normally. |
+| `get_trends` | Any exception or all sources fail (network error, rate limit, parse error) | Sets `session["trends"]` to `{"trends": [], "source": "unavailable"}` and continues. Non-blocking — `suggest_outfit` is called without trend context; trend line is omitted from the listing panel. |
+| `suggest_outfit` | LLM call raises an exception (e.g., API timeout, invalid key) or returns empty/whitespace string | Sets `session["error"]` = "Couldn't generate an outfit suggestion — the styling service is unavailable. Try again in a moment." Returns session early; does not call `create_fit_card`. |
+| `create_fit_card` | `outfit` argument is an empty or whitespace-only string | Function returns the error string "Can't create a fit card — the outfit description is missing. Please try your search again." without calling the LLM — no exception raised. |
+| `create_fit_card` | LLM call raises an exception | Sets `session["error"]` = "Fit card generation failed. Your outfit suggestion is ready — the caption couldn't be created this time." Returns session early. |
 
 ---
 
@@ -236,25 +249,35 @@ For each tool, describe the specific failure mode you're handling and what the a
 
 ```mermaid
 flowchart TD
-    A([User query + wardrobe choice]) --> B[run_agent: initialize session]
-    B --> C[Parse query<br>extract description, size, max_price<br>store in session.parsed]
+    A([User query + wardrobe choice<br>Gradio UI — handle_query]) --> B[run_agent: initialize session<br>_new_session]
+    B --> C[Parse query with regex<br>extract description, size, max_price<br>store in session.parsed]
     C --> D[search_listings<br>description, size, max_price]
     D --> E{results empty?}
     E -- Yes --> F[session.error =<br>No listings found...<br>return session early]
     E -- No --> G[session.selected_item = results-0]
-    G --> H[suggest_outfit<br>new_item = selected_item<br>wardrobe = session.wardrobe]
-    H --> I{outfit string empty?}
-    I -- Yes --> J[session.error =<br>Styling service unavailable<br>return session early]
-    I -- No --> K[session.outfit_suggestion = result]
-    K --> L[create_fit_card<br>outfit = outfit_suggestion<br>new_item = selected_item]
-    L --> M[session.fit_card = result]
-    M --> N([Return session])
-    F --> O([Return session with error])
-    J --> O
+    G --> H[compare_price session.selected_item<br>stretch — non-blocking<br>store in session.price_comparison]
+    H --> I[get_trends size + category<br>stretch — non-blocking<br>store in session.trends]
+    I --> J[suggest_outfit<br>new_item = selected_item<br>wardrobe + trends = session.trends]
+    J --> K{outfit empty or exception?}
+    K -- Yes --> L[session.error =<br>Styling service unavailable<br>return session early]
+    K -- No --> M[session.outfit_suggestion = result]
+    M --> N[create_fit_card<br>outfit = outfit_suggestion<br>new_item = selected_item]
+    N --> O{exception?}
+    O -- Yes --> P[session.error =<br>Fit card generation failed<br>return session early]
+    O -- No --> Q[session.fit_card = result<br>return completed session]
+    Q --> R[handle_query formats output<br>listing_text + price_verdict + trend_line]
+    R --> S([Gradio UI — three output panels])
+    F --> T([Return session with error])
+    L --> T
+    P --> T
+    T --> U[handle_query returns error<br>in panel 1 empty panels 2-3]
+    U --> S
     style F fill:#ffcccc
-    style J fill:#ffcccc
-    style O fill:#ffcccc
-    style N fill:#ccffcc
+    style L fill:#ffcccc
+    style P fill:#ffcccc
+    style T fill:#ffcccc
+    style Q fill:#ccffcc
+    style S fill:#cce5ff
 ```
 
 ---
@@ -281,25 +304,34 @@ I'll give Claude the Planning Loop section, State Management section, and the Ar
 
 **Step 1: Query parsing + search_listings**
 
-The agent extracts description="vintage graphic tee", size=None, max_price=30.0 from the query. Since session["selected_item"] is None, the planning loop calls search_listings(...). It returns [{"name": "Faded Nirvana Tee", "price": 22.0, ...}, ...]. The agent picks the top result and stores it in session["selected_item"].
+The agent uses regex to extract description="vintage graphic tee", size=None, and max_price=30.0 from the query, storing them in `session["parsed"]`. It calls `search_listings("vintage graphic tee", None, 30.0)`, which returns a relevance-sorted list; the top result (e.g., "Y2K Baby Tee") is stored in `session["selected_item"]`.
 
-(Non-happy path: If the list is empty, the agent sets session["error"] and stops, telling the user: "No listings matched... try broadening your description or raising your budget.")
+(Non-happy path: If the list is empty, the agent sets `session["error"]` = "No listings found for 'vintage graphic tee' under $30. Try broadening your description or raising your budget." and returns immediately without calling any further tool.)
 
+**Step 2: compare_price (stretch)**
 
-**Step 2: suggest_outfit**
+The agent calls `compare_price(session["selected_item"])` to check whether the $18 tee is a good deal relative to other tops in the dataset. The result — e.g., `{"verdict": "great deal", "percentile": 22, ...}` — is stored in `session["price_comparison"]` and later surfaced in the listing panel. If this call fails for any reason, it is silently skipped and the loop continues.
 
-Since session["selected_item"] is populated and session["outfit_suggestion"] is None, the planning loop calls suggest_outfit(new_item=<stored tee>, wardrobe=<user wardrobe>). Returns a styling suggestion string, stored in session["outfit_suggestion"].
+**Step 3: get_trends (stretch)**
 
-**Step 3: create_fit_card**
+The agent calls `get_trends(size=None, category="tops")`, which queries Reddit (or falls back to RSS feeds) and returns matched style keywords such as `["Y2K", "vintage", "streetwear"]`. The result is stored in `session["trends"]` and passed directly into `suggest_outfit` so the LLM can weave current trends into its suggestion. If this call fails, an empty trends dict is used and the loop continues normally.
 
-Since session["outfit_suggestion"] is populated and session["fit_card"] is None, the planning loop calls create_fit_card(outfit=<stored suggestion>, new_item=<stored tee>). Returns the caption string, stored in session["fit_card"].
+**Step 4: suggest_outfit**
+
+The agent calls `suggest_outfit(session["selected_item"], session["wardrobe"], trends=session["trends"])`, which prompts the LLM to build 1–2 outfits using the tee and the user's wardrobe pieces, with trend context appended to the prompt when available. The returned string is stored in `session["outfit_suggestion"]`.
+
+(Non-happy path: If the LLM raises an exception or returns an empty string, the agent sets `session["error"]` = "Couldn't generate an outfit suggestion — the styling service is unavailable. Try again in a moment." and returns early without calling `create_fit_card`.)
+
+**Step 5: create_fit_card**
+
+The agent calls `create_fit_card(session["outfit_suggestion"], session["selected_item"])`, which uses a higher LLM temperature (0.9) to produce a casual, Instagram-ready caption that names the item, price, and platform. The result is stored in `session["fit_card"]`.
 
 **Final output to user:**
 
-All three session values returned to the UI. The user sees the Gradio interface populate its three specific output panels with the final session state data.
+`handle_query()` receives the completed session and maps its values to the three Gradio output panels.
 
-Search Result Panel: Displays the selected item details, showing the "Faded Nirvana Tee" along with its price ($22.00) and condition.
+Search Result Panel: Displays the selected item's title, price, size, condition, platform, and colors — plus the price verdict from `compare_price` and any matched trending styles from `get_trends` when available.
 
-Styling Advice Panel: Displays the natural language response from the suggest_outfit tool, specifically advising the user on how to style the vintage tee with their preferred baggy jeans and chunky sneakers.
+Styling Advice Panel: Displays the natural language outfit suggestion from `suggest_outfit`, naming specific wardrobe pieces and how they pair with the thrifted item.
 
-Fit Card Panel: Displays the final generated Instagram-style caption from the create_fit_card tool, ready for the user to copy and share.
+Fit Card Panel: Displays the Instagram-style caption from `create_fit_card`, ready for the user to copy and share.
