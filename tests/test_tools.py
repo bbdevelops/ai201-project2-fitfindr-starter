@@ -1,5 +1,5 @@
 # tests/test_tools.py
-from tools import search_listings, suggest_outfit
+from tools import search_listings, suggest_outfit, create_fit_card
 from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 REQUIRED_FIELDS = {"id", "title", "description", "category", "style_tags",
@@ -153,3 +153,68 @@ def test_suggest_outfit_missing_items_key_graceful():
     result = suggest_outfit(SAMPLE_ITEM, {})
     assert isinstance(result, str)
     assert len(result.strip()) > 0
+
+
+# ── create_fit_card tests ─────────────────────────────────────────────────────
+
+SAMPLE_OUTFIT = (
+    "Pair the Faded Nirvana Tee with your Wide-Leg Levi's and white chunky sneakers "
+    "for a relaxed grunge-meets-'90s look. Tuck the tee loosely and add a denim "
+    "jacket on top if it gets cold."
+)
+
+ERROR_MSG = "Can't create a fit card — the outfit description is missing. Please try your search again."
+
+
+def test_create_fit_card_returns_string():
+    """Valid inputs return a non-empty string."""
+    result = create_fit_card(SAMPLE_OUTFIT, SAMPLE_ITEM)
+    assert isinstance(result, str)
+    assert len(result.strip()) > 0
+
+
+def test_create_fit_card_empty_outfit_no_crash():
+    """Empty outfit string returns the error message — no exception raised."""
+    result = create_fit_card("", SAMPLE_ITEM)
+    assert result == ERROR_MSG
+
+
+def test_create_fit_card_whitespace_outfit_no_crash():
+    """Whitespace-only outfit string returns the error message — no exception raised."""
+    result = create_fit_card("   ", SAMPLE_ITEM)
+    assert result == ERROR_MSG
+
+
+def test_create_fit_card_mentions_item_name():
+    """Caption should reference the thrifted item's title."""
+    result = create_fit_card(SAMPLE_OUTFIT, SAMPLE_ITEM)
+    lower = result.lower()
+    # Title is "Faded Nirvana Tee" — at least one word should appear
+    assert any(word in lower for word in ["nirvana", "faded", "tee"]), (
+        f"Caption doesn't mention the item: {result[:300]}"
+    )
+
+
+def test_create_fit_card_mentions_platform():
+    """Caption should mention the platform (depop)."""
+    result = create_fit_card(SAMPLE_OUTFIT, SAMPLE_ITEM)
+    assert SAMPLE_ITEM["platform"] in result.lower(), (
+        f"Caption doesn't mention the platform: {result[:300]}"
+    )
+
+
+def test_create_fit_card_mentions_price():
+    """Caption should mention the price."""
+    result = create_fit_card(SAMPLE_OUTFIT, SAMPLE_ITEM)
+    assert str(int(SAMPLE_ITEM["price"])) in result, (
+        f"Caption doesn't mention the price: {result[:300]}"
+    )
+
+
+def test_create_fit_card_varies_across_calls():
+    """Two calls on the same input should produce different captions (temperature > 0)."""
+    result_a = create_fit_card(SAMPLE_OUTFIT, SAMPLE_ITEM)
+    result_b = create_fit_card(SAMPLE_OUTFIT, SAMPLE_ITEM)
+    assert result_a != result_b, (
+        "Both calls returned identical output — temperature may be 0 or too low."
+    )

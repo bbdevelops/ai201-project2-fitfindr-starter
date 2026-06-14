@@ -93,6 +93,8 @@ If `outfit` is empty or whitespace-only, returns the error string: "Can't create
 **What happens if it fails or returns nothing:**
 If `outfit` is empty, the function returns the error string above instead of calling the LLM — no exception is raised. If the LLM call fails, the agent sets `session["error"]` to: "Fit card generation failed. Your outfit suggestion is ready — the caption couldn't be created this time."
 
+> **Implementation note:** The spec states `new_item` must have `title`, `price`, and `platform`. The implementation accesses these via `.get()` with safe fallbacks (`"this piece"`, `""`, `""`) rather than direct key access, so a partially-formed dict does not raise a `KeyError`. LLM temperature is set to exactly `0.9`, the minimum of the spec's `0.9+` range.
+
 ---
 
 ### Additional Tools (if any)
