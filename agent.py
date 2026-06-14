@@ -47,6 +47,7 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "price_comparison": None,    # dict returned by compare_price (stretch)
         "trends": None,              # dict returned by get_trends (stretch)
         "error": None,               # set if the interaction ended early
+        "retry_note": None,          # set if search retried with loosened filters
     }
 
 
@@ -102,15 +103,36 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
     session["parsed"] = {"description": description, "size": size, "max_price": max_price, "category": category}
 
-    # Step 3: Search — branch on empty results (do NOT proceed with empty input)
-    results = search_listings(description, size, max_price, category=category)
+    # Step 3: Search with retry fallback — progressively loosen filters until results found
+    _loosened: list[str] = []
+    _retry_configs: list[tuple] = [(size, max_price, category, None)]
+    if size is not None:
+        _loosened.append(f"size ({size})")
+        _retry_configs.append((None, max_price, category, f"removed {', '.join(_loosened)}"))
+    if max_price is not None:
+        _loosened.append(f"price (under ${max_price:.0f})")
+        _retry_configs.append((None, None, category, f"removed {', '.join(_loosened)}"))
+    if category is not None:
+        _loosened.append(f"category ({category})")
+        _retry_configs.append((None, None, None, f"removed {', '.join(_loosened)}"))
+
+    results = []
+    retry_note = None
+    for _size, _price, _cat, _note in _retry_configs:
+        results = search_listings(description, _size, _price, category=_cat)
+        if results:
+            retry_note = _note
+            break
+
     session["search_results"] = results
+    session["retry_note"] = retry_note
+
     if not results:
         price_clause = f" under ${max_price:.0f}" if max_price else ""
         cat_hint = f" in the '{category}' category" if category else ""
         session["error"] = (
-            f"No listings found for '{description}'{price_clause}{cat_hint}. "
-            "Try broadening your description or raising your budget."
+            f"No listings found for '{description}'{price_clause}{cat_hint} even after loosening all filters. "
+            "Try a different description."
         )
         return session
 

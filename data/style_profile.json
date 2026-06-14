@@ -1,21 +1,25 @@
 {
-  "last_updated": "2026-06-14T10:48:18.271699",
+  "last_updated": "2026-06-14T12:45:06.378313",
   "style_counts": {
-    "graphic tee": 1,
-    "vintage": 1,
-    "grunge": 1,
-    "punk": 1,
-    "rock": 1,
-    "streetwear": 2,
-    "band tee": 1,
     "y2k": 1,
-    "platform": 1,
-    "90s": 1
+    "grunge": 3,
+    "goth": 1,
+    "punk": 3,
+    "edgy": 1,
+    "layering": 2,
+    "vintage": 2,
+    "flannel": 1,
+    "streetwear": 2,
+    "graphic tee": 1,
+    "rock": 1,
+    "band tee": 1
   },
   "color_counts": {
-    "black": 1,
-    "white": 1
+    "black": 3,
+    "red": 1
   },
-  "preferred_sizes": {},
-  "interaction_count": 2
+  "preferred_sizes": {
+    "tops": "XXS"
+  },
+  "interaction_count": 3
 }

@@ -202,8 +202,8 @@ The planning loop in `run_agent()` works as a sequential conditional chain — e
    - Description: price and size fragments stripped from the query; stripped remainder becomes description
    - Store all three in `session["parsed"]`.
 
-3. **Search**: Call `search_listings(description, size, max_price)`. Store the result list in `session["search_results"]`.
-   - **If `session["search_results"] == []`**: set `session["error"]` to a specific message and `return session` immediately. Do NOT proceed to any further tool.
+3. **Search with retry fallback** *(stretch)*: Build a list of up to 4 progressively looser filter configurations: (a) full filters, (b) drop size, (c) also drop max_price, (d) also drop category. Iterate through them, calling `search_listings` each time. Stop as soon as results are non-empty and record which filters were loosened in `session["retry_note"]` (None on first-try success).
+   - **If all retries return `[]`**: set `session["error"]` to a specific message and `return session` immediately. Do NOT proceed to any further tool.
    - **If results are non-empty**: set `session["selected_item"] = session["search_results"][0]`.
 
 4. **Compare price** *(stretch, non-blocking)*: Call `compare_price(session["selected_item"])`. Store the result dict in `session["price_comparison"]`. Any exception is caught and suppressed — the loop continues regardless.
@@ -261,7 +261,7 @@ For each tool, describe the specific failure mode you're handling and what the a
 
 | Tool | Failure mode | Agent response |
 |------|-------------|----------------|
-| `search_listings` | Returns `[]` — no listings match description/size/price filters | Sets `session["error"]` = "No listings found for '[description]' under $[max_price]. Try broadening your description or raising your budget." Returns session immediately; does not call any further tool. |
+| `search_listings` | Returns `[]` on first attempt | **Retry with fallback (stretch):** automatically retries up to 3 times, progressively dropping: (1) size filter, (2) price filter, (3) category filter. Sets `session["retry_note"]` describing what was loosened. Only sets `session["error"]` and returns early if all retries fail: "No listings found for '[description]' even after loosening all filters. Try a different description." |
 | `compare_price` | Any exception (missing `category`/`price` key, unexpected data) | Sets `session["price_comparison"] = None` and continues. Non-blocking — price verdict is omitted from the UI but the rest of the interaction completes normally. |
 | `get_trends` | Any exception or all sources fail (network error, rate limit, parse error) | Sets `session["trends"]` to `{"trends": [], "source": "unavailable"}` and continues. Non-blocking — `suggest_outfit` is called without trend context; trend line is omitted from the listing panel. |
 | `suggest_outfit` | LLM call raises an exception (e.g., API timeout, invalid key) or returns empty/whitespace string | Sets `session["error"]` = "Couldn't generate an outfit suggestion — the styling service is unavailable. Try again in a moment." Returns session early; does not call `create_fit_card`. |

@@ -48,7 +48,10 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str, 
     if trends.get("trends"):
         trend_line = f"\nTrending styles: {', '.join(trends['trends'])}"
 
-    listing_text = (
+    retry_note = session.get("retry_note")
+    retry_banner = f"ℹ️ No exact matches — retried with {retry_note}.\n\n" if retry_note else ""
+
+    listing_text = retry_banner + (
         f"Title: {item.get('title', 'N/A')}\n"
         f"Price: ${item.get('price', 0):.2f}\n"
         f"Size: {item.get('size', 'N/A')}\n"
