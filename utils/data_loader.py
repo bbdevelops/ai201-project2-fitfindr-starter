@@ -31,8 +31,15 @@ def load_listings() -> list[dict]:
         - platform (str): depop, thredUp, or poshmark
     """
     path = os.path.join(_DATA_DIR, "listings.json")
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"listings.json not found at {path}. Make sure the data/ directory is present."
+        )
+    except json.JSONDecodeError as e:
+        raise ValueError(f"listings.json is malformed (line {e.lineno}): {e.msg}")
 
 
 def load_wardrobe_schema() -> dict:
@@ -46,8 +53,15 @@ def load_wardrobe_schema() -> dict:
         - empty_wardrobe: a starting template for a new user
     """
     path = os.path.join(_DATA_DIR, "wardrobe_schema.json")
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"wardrobe_schema.json not found at {path}. Make sure the data/ directory is present."
+        )
+    except json.JSONDecodeError as e:
+        raise ValueError(f"wardrobe_schema.json is malformed (line {e.lineno}): {e.msg}")
 
 
 def get_example_wardrobe() -> dict:
@@ -58,7 +72,10 @@ def get_example_wardrobe() -> dict:
         A wardrobe dict with an 'items' key containing a list of wardrobe items.
     """
     schema = load_wardrobe_schema()
-    return schema["example_wardrobe"]
+    wardrobe = schema.get("example_wardrobe")
+    if wardrobe is None:
+        raise KeyError("wardrobe_schema.json is missing the 'example_wardrobe' key.")
+    return wardrobe
 
 
 def get_empty_wardrobe() -> dict:
@@ -69,15 +86,20 @@ def get_empty_wardrobe() -> dict:
         A wardrobe dict with an empty 'items' list.
     """
     schema = load_wardrobe_schema()
-    return schema["empty_wardrobe"]
+    wardrobe = schema.get("empty_wardrobe")
+    if wardrobe is None:
+        raise KeyError("wardrobe_schema.json is missing the 'empty_wardrobe' key.")
+    return wardrobe
 
 
 # --- Quick sanity check ---
 if __name__ == "__main__":
     listings = load_listings()
     print(f"Loaded {len(listings)} listings.")
-    print(f"First listing: {listings[0]['title']} — ${listings[0]['price']}")
+    if listings:
+        print(f"First listing: {listings[0]['title']} — ${listings[0]['price']}")
 
     wardrobe = get_example_wardrobe()
     print(f"\nExample wardrobe has {len(wardrobe['items'])} items.")
-    print(f"First item: {wardrobe['items'][0]['name']}")
+    if wardrobe.get('items'):
+        print(f"First item: {wardrobe['items'][0]['name']}")

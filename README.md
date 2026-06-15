@@ -1,6 +1,6 @@
 # FitFindr
 
-FitFindr is a multi-tool AI agent that helps users find secondhand clothing and figure out how to wear it. It searches mock thrift listings, generates outfit combinations using an LLM, and produces a shareable fit card — while handling failures at each step rather than crashing or silently degrading.
+FitFindr is a multi-tool AI agent that helps users find secondhand clothing and figure out how to wear it. It searches mock thrift listings, generates outfit combinations using an LLM, and produces a shareable fit card. All while handling failures at each step rather than crashing or silently degrading.
 
 ---
 
@@ -310,9 +310,9 @@ On the first non-empty result, `session["retry_note"]` records what was loosened
 
 ## Spec Reflection
 
-**One way the spec helped:** The tool specs in `planning.md` listed exact parameter names, types, and return field names before any code was written. This made AI-generated implementations verifiable mechanically — if a generated function used `item["style"]` instead of `item["style_tags"]`, that was a clear mismatch against the spec, not a judgment call.
+**One way the spec helped:** The tool specs in `planning.md` listed exact parameter names, types, and return field names before any code was written. This made AI-generated implementations verifiable mechanically. If a generated function used `item["style"]` instead of `item["style_tags"]`, that was a clear mismatch against the spec, not a judgment call.
 
-**One divergence and why:** The initial spec described a wardrobe item's style field as `style` (str). The actual `wardrobe_schema.json` in the starter repo uses `style_tags` (list[str]). The implementation was updated to match the schema — `style_tags` is used throughout `suggest_outfit` and the test suite. The spec was updated in `planning.md` with an implementation note to record the divergence.
+**One divergence and why:** The initial spec described a wardrobe item's style field as `style` (str). The actual `wardrobe_schema.json` in the starter repo uses `style_tags` (list[str]). The implementation was updated to match the schema so that `style_tags` is used throughout `suggest_outfit` and the test suite. The spec was updated in `planning.md` with an implementation note to record the divergence.
 
 ---
 

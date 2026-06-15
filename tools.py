@@ -395,7 +395,9 @@ def suggest_outfit(new_item: dict, wardrobe: dict, trends: dict | None = None, u
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
     )
-    return response.choices[0].message.content or ""
+    if not response.choices or not response.choices[0].message.content:
+        return ""
+    return response.choices[0].message.content
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -451,7 +453,9 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         messages=[{"role": "user", "content": prompt}],
         temperature=0.9,
     )
-    return response.choices[0].message.content or ""
+    if not response.choices or not response.choices[0].message.content:
+        return ""
+    return response.choices[0].message.content
 
 
 # ── Tool 4: compare_price ─────────────────────────────────────────────────────
