@@ -2,6 +2,9 @@
 
 FitFindr is a multi-tool AI agent that helps users find secondhand clothing and figure out how to wear it. It searches mock thrift listings, generates outfit combinations using an LLM, and produces a shareable fit card. All while handling failures at each step rather than crashing or silently degrading.
 
+## Demo Video
+https://vimeo.com/1201310169
+
 ---
 
 ## Setup
